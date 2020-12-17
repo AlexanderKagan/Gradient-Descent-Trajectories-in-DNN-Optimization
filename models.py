@@ -1,6 +1,31 @@
 import torch.nn as nn
 import torch
+from torch.distributions import Normal
+import numpy as np
 
+# !credits!: https://github.com/j-min/Dropouts
+class GaussianDropout(nn.Module):
+    def __init__(self, alpha=1.0):
+        super(GaussianDropout, self).__init__()
+        self.alpha = torch.Tensor([alpha])
+        
+    def forward(self, x):
+        """
+        Sample noise   e ~ N(1, alpha)
+        Multiply noise h = h_ * e
+        """
+        if self.train():
+            # N(1, alpha)
+            epsilon = torch.randn(x.size()) * self.alpha + 1
+            epsilon = epsilon.to(x)
+
+            # epsilon = Variable(epsilon)
+            # if x.is_cuda:
+            #     epsilon = epsilon.cuda()
+
+            return x * epsilon
+        else:
+            return x
 
 class linearNN(nn.Module):
     def __init__(self, inp_size, out_size, widths, init=None):
@@ -16,8 +41,10 @@ class linearNN(nn.Module):
             if isinstance(init, int):
                 shape = layer.weight.shape
                 assert init <= min(shape)
-                new_weights = torch.zeros(shape)
-                new_weights[:init, :init] = torch.randn((init, init))
+                xe_scale = np.sqrt(2./(shape[0] + shape[1]))
+                new_weights = torch.ones(shape)*xe_scale
+                new_weights[:init, :init] = Normal(0., xe_scale).sample((init, init))
+                # new_weights[:init, :init] = torch.randn((init, init))
                 layer.weight.data = new_weights[torch.randperm(shape[0])]
 
             elif init == 'all_ones':
@@ -51,3 +78,11 @@ class linearNN_with_activation(linearNN):
             x = self.layers[i](self.activation(x))
         x = self.out_layer(self.activation(x))
         return x
+
+class linearNN_dropout(linearNN_with_activation):
+
+    def __init__(self, inp_size, out_size, widths, drop_alpha=0.1, activation=lambda x: x, init=None):
+        dropout = GaussianDropout(alpha=drop_alpha)
+        def drop_activation(x):
+            return activation(dropout(x))
+        super().__init__(inp_size, out_size, widths, drop_activation, init=init)
